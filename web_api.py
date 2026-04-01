@@ -36,20 +36,19 @@ app = FastAPI(title="Bangumi-PikPak Web UI")
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
-
-class NoCacheEnvironment(Environment):
-    """禁用缓存的Jinja2环境"""
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.cache = {}
-
-
-template_env = NoCacheEnvironment(
-    loader=FileSystemLoader(str(TEMPLATES_DIR)), auto_reload=True, cache_size=0
+template_env = Environment(
+    loader=FileSystemLoader(str(TEMPLATES_DIR)),
+    auto_reload=True,
+    cache_size=0,
+    autoescape=True,
 )
-templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
-templates.env = template_env
+
+
+def render_template(template_name: str, context: dict) -> str:
+    """渲染模板（绕过缓存）"""
+    template = template_env.get_template(template_name)
+    return template.render(**context)
+
 
 SECRET_KEY = None
 ALGORITHM = "HS256"
@@ -140,7 +139,8 @@ async def root(request: Request):
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
     """登录页面"""
-    return templates.TemplateResponse("login.html", {"request": request})
+    html = render_template("login.html", {"request": request})
+    return HTMLResponse(content=html)
 
 
 @app.post("/login")
@@ -150,9 +150,8 @@ async def login(request: Request, password: str = Form(...)):
         raise HTTPException(status_code=500, detail="服务未初始化")
 
     if password != _config_instance.web_password:
-        return templates.TemplateResponse(
-            "login.html", {"request": request, "error": "密码错误"}
-        )
+        html = render_template("login.html", {"request": request, "error": "密码错误"})
+        return HTMLResponse(content=html)
 
     access_token = create_access_token(data={"sub": "admin"})
 
@@ -187,24 +186,24 @@ async def dashboard(request: Request, user: str = Depends(require_auth)):
 
     uptime = datetime.now() - datetime.fromtimestamp(_downloader_instance.start_time)
 
-    return templates.TemplateResponse(
-        "dashboard.html",
-        {
-            "request": request,
-            "stats": stats,
-            "recent_updates": recent_updates,
-            "bangumi_list": bangumi_list,
-            "uptime": str(uptime).split(".")[0],
-            "error_count": _downloader_instance.error_count,
-            "config": _config_instance,
-        },
-    )
+    context = {
+        "request": request,
+        "stats": stats,
+        "recent_updates": recent_updates,
+        "bangumi_list": bangumi_list,
+        "uptime": str(uptime).split(".")[0],
+        "error_count": _downloader_instance.error_count,
+        "config": _config_instance,
+    }
+    html = render_template("dashboard.html", context)
+    return HTMLResponse(content=html)
 
 
 @app.get("/logs", response_class=HTMLResponse)
 async def logs_page(request: Request, user: str = Depends(require_auth)):
     """日志页面"""
-    return templates.TemplateResponse("logs.html", {"request": request})
+    html = render_template("logs.html", {"request": request})
+    return HTMLResponse(content=html)
 
 
 @app.get("/config", response_class=HTMLResponse)
@@ -213,9 +212,10 @@ async def config_page(request: Request, user: str = Depends(require_auth)):
     if not _config_instance:
         raise HTTPException(status_code=500, detail="服务未初始化")
 
-    return templates.TemplateResponse(
+    html = render_template(
         "config.html", {"request": request, "config": _config_instance}
     )
+    return HTMLResponse(content=html)
 
 
 @app.get("/api/status")
