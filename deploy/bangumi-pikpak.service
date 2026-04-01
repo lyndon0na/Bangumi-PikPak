@@ -1,0 +1,45 @@
+[Unit]
+Description=Bangumi-PikPak Auto Downloader Service
+Documentation=https://github.com/YinBuLiao/Bangumi-PikPak
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 注意：User、Group、WorkingDirectory 和 ExecStart 会在安装时自动配置
+# 请使用 install-service.sh 脚本进行安装
+# User=<your_username>
+# Group=<your_username>
+# WorkingDirectory=<project_directory>
+# ExecStart=<project_directory>/venv/bin/python <project_directory>/main.py
+
+# 环境变量
+Environment="PYTHONUNBUFFERED=1"
+Environment="LANG=en_US.UTF-8"
+Environment="LC_ALL=en_US.UTF-8"
+
+# 重启策略
+Restart=on-failure
+RestartSec=10s
+
+# 启动超时
+TimeoutStartSec=30s
+
+# 停止超时
+TimeoutStopSec=30s
+
+# 日志配置
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bangumi-pikpak
+
+# 资源限制
+LimitNOFILE=65536
+MemoryMax=512M
+
+# 安全加固
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
