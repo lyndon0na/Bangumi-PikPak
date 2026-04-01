@@ -17,6 +17,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from jose import JWTError, jwt
 from passlib.context import CryptContext
+from jinja2 import Environment, FileSystemLoader
 
 from config import Config
 from state_manager import StateManager
@@ -35,7 +36,11 @@ app = FastAPI(title="Bangumi-PikPak Web UI")
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
+template_env = Environment(
+    loader=FileSystemLoader(str(TEMPLATES_DIR)), auto_reload=True
+)
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+templates.env = template_env
 
 SECRET_KEY = None
 ALGORITHM = "HS256"
