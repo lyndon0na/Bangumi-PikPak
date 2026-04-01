@@ -36,8 +36,17 @@ app = FastAPI(title="Bangumi-PikPak Web UI")
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
-template_env = Environment(
-    loader=FileSystemLoader(str(TEMPLATES_DIR)), auto_reload=True
+
+class NoCacheEnvironment(Environment):
+    """禁用缓存的Jinja2环境"""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.cache = {}
+
+
+template_env = NoCacheEnvironment(
+    loader=FileSystemLoader(str(TEMPLATES_DIR)), auto_reload=True, cache_size=0
 )
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 templates.env = template_env
