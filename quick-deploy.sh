@@ -17,7 +17,12 @@ NC='\033[0m'
 
 # 仓库地址
 REPO_URL="https://github.com/lyndon0na/Bangumi-PikPak.git"
-DEFAULT_DIR="$HOME/Bangumi-PikPak"
+
+# 默认目录（使用多种方式确保获取主目录）
+if [ -z "$HOME" ]; then
+    HOME=$(eval echo ~$(whoami))
+fi
+DEFAULT_DIR="${HOME}/Bangumi-PikPak"
 
 # 模式标志
 INTERACTIVE_MODE=false
@@ -115,6 +120,11 @@ clone_project() {
     if [ "$INTERACTIVE_MODE" = true ]; then
         read -p "项目安装目录 [默认: $DEFAULT_DIR]: " CUSTOM_DIR
         PROJECT_DIR="${CUSTOM_DIR:-$DEFAULT_DIR}"
+    fi
+    
+    # 确保目录不为空
+    if [ -z "$PROJECT_DIR" ]; then
+        PROJECT_DIR="$DEFAULT_DIR"
     fi
     
     print_info "安装目录: $PROJECT_DIR"
