@@ -30,6 +30,8 @@
 
 ## 🚀 快速开始
 
+> **💡 提示**：项目支持在任意目录部署，所有路径自动适配。详见 [部署指南](docs/DEPLOYMENT.md)。
+
 ### 环境要求
 
 - Python 3.10 或更高版本
@@ -40,12 +42,17 @@
 
 1. **克隆项目**
 ```bash
-[git clone https://github.com/hrWong/Bangumi-PikPak.git](https://github.com/YinBuLiao/Bangumi-PikPak.git)
+git clone https://github.com/YinBuLiao/Bangumi-PikPak.git
 cd Bangumi-PikPak
 ```
 
 2. **安装依赖**
 ```bash
+# 创建虚拟环境（推荐）
+python3 -m venv venv
+source venv/bin/activate
+
+# 安装依赖
 pip install -r requirements.txt
 ```
 
@@ -75,12 +82,23 @@ python main.py
     "password": "your_password",
     "path": "your_pikpak_folder_id",
     "rss": "https://mikanani.me/RSS/MyBangumi?token=your_token_here",
+    
     "http_proxy": "http://127.0.0.1:7890",
     "https_proxy": "http://127.0.0.1:7890",
     "socks_proxy": "socks5://127.0.0.1:7890",
     "enable_proxy": false,
+    
     "ntfy_url": "https://ntfy.sh/mytopic",
-    "enable_notifications": true
+    "enable_notifications": true,
+    
+    "rss_check_interval": 600,
+    "token_refresh_interval": 21600,
+    "max_retries": 3,
+    "request_timeout": 30,
+    
+    "log_level": "INFO",
+    "log_max_bytes": 10485760,
+    "log_backup_count": 5
 }
 ```
 
@@ -98,6 +116,13 @@ python main.py
 | `enable_proxy` | 是否启用代理 | `true` 或 `false` |
 | `ntfy_url` | ntfy.sh 通知地址 | `https://ntfy.sh/mytopic` |
 | `enable_notifications` | 是否启用通知 | `true` 或 `false` |
+| `rss_check_interval` | RSS 检查间隔（秒） | `600`（默认） |
+| `token_refresh_interval` | Token 刷新间隔（秒） | `21600`（默认） |
+| `max_retries` | 网络请求最大重试次数 | `3`（默认） |
+| `request_timeout` | 网络请求超时时间（秒） | `30`（默认） |
+| `log_level` | 日志级别 | `INFO`、`DEBUG`、`WARNING`、`ERROR` |
+| `log_max_bytes` | 日志文件最大大小（字节） | `10485760`（10MB） |
+| `log_backup_count` | 日志备份文件数量 | `5`（默认） |
 
 ### 获取配置信息
 
@@ -121,6 +146,40 @@ python main.py
 **安全提示**：请选择独特且不易猜测的主题名称，避免他人接收到您的通知
 
 ## 📦 打包部署
+
+> **📖 完整部署指南**：[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) - 包含详细步骤和常见问题
+>
+> **📖 运维指南**：[docs/OPERATIONS.md](docs/OPERATIONS.md) - systemd 服务、监控、告警
+
+### systemd 服务部署（推荐）
+
+**一键安装**：
+
+```bash
+# 进入项目目录
+cd Bangumi-PikPak
+
+# 运行安装脚本（自动检测路径和用户）
+sudo ./deploy/install-service.sh
+```
+
+**服务管理**：
+
+```bash
+# 启动服务
+sudo systemctl start bangumi-pikpak
+
+# 查看状态
+sudo systemctl status bangumi-pikpak
+
+# 查看日志
+sudo journalctl -u bangumi-pikpak -f
+
+# 健康检查
+./deploy/health-check.sh
+```
+
+**详细运维指南**：参见 [OPERATIONS.md](docs/OPERATIONS.md)
 
 ### 生成可执行文件
 
@@ -197,6 +256,26 @@ venv\Scripts\activate  # Windows
 # 安装开发依赖
 pip install -r requirements.txt
 ```
+
+### 代码结构
+
+项目采用模块化设计，便于维护和扩展：
+
+```
+Bangumi-PikPak/
+├── main.py           # 主程序入口
+├── config.py         # 配置加载和验证
+├── utils.py          # 工具函数（重试机制、日志等）
+├── requirements.txt  # Python 依赖
+└── config.json       # 配置文件（用户创建）
+```
+
+**核心改进**：
+- ✅ 启动时配置验证，避免运行时错误
+- ✅ 网络请求自动重试，提高稳定性
+- ✅ 统一的异常处理和日志记录
+- ✅ 敏感信息脱敏，保护隐私
+- ✅ 灵活的配置项（检查间隔、重试次数等）
 
 ### 代码规范
 - 使用 Python 3.10+ 语法

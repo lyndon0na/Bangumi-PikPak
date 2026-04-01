@@ -1,471 +1,288 @@
+"""Bangumi-PikPak 主程序
+
+自动追踪番剧并上传到 PikPak 的工具。
+"""
+
 import asyncio
-import urllib.request
-import feedparser
 import logging
 import os
 import signal
 import sys
 import time
+from typing import List
+
 import httpx
-import json
-import urllib
-import requests
-from logging.handlers import RotatingFileHandler
-from pikpakapi import PikPakApi  # requirement: python >= 3.10
-from bs4 import BeautifulSoup
-from pathvalidate import sanitize_filepath
 
-# 获取脚本所在目录的绝对路径
+from config import Config, load_config, save_config
+from pikpak_client import PikPakClientWrapper
+from rss_parser import RSSParser, TorrentInfo
+from notifier import Notifier
+from utils import setup_logging, ensure_directory, async_retry
+
+logger = logging.getLogger(__name__)
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_FILE = os.path.join(SCRIPT_DIR, "config.json")
 
-CONFIG_FILE = os.path.join(SCRIPT_DIR, "config.json")     # 配置文件（保存基本配置）
-CLIENT_STATE_FILE = os.path.join(SCRIPT_DIR, "pikpak.json")    # 客户端状态文件（保存 PikPakApi 登录状态及 token 等信息）
 
-# 全局变量（由配置文件或手动填写）
-USER = [""]
-PASSWORD = [""]
-PATH = [""]
-RSS = [""]
-INTERVAL_TIME_RSS = 600  # rss 检查间隔
-INTERVAL_TIME_REFRESH = 21600  # token 刷新间隔
-PIKPAK_CLIENTS = [""]
-last_refresh_time = 0
-mylist = []
+class BangumiDownloader:
+    """番剧下载器主类"""
 
-# 代理配置
-HTTP_PROXY = ""      # HTTP代理地址，例如: "http://127.0.0.1:7890"
-HTTPS_PROXY = ""     # HTTPS代理地址，例如: "http://127.0.0.1:7890"
-SOCKS_PROXY = ""     # SOCKS代理地址，例如: "socks5://127.0.0.1:7890"
-ENABLE_PROXY = False # 是否启用代理
+    def __init__(self, config: Config):
+        self.config = config
+        self.pikpak_client = PikPakClientWrapper(config)
+        self.rss_parser = RSSParser(config)
+        self.notifier = Notifier(config)
+        self.http_client: httpx.AsyncClient = None
+        self.torrent_list: List[TorrentInfo] = []
 
-# 通知配置
-NTFY_URL = ""        # ntfy.sh 通知地址，例如: "https://ntfy.sh/mytopic"
-ENABLE_NOTIFICATIONS = False # 是否启用通知
+        # 监控和健康检查
+        self.error_count: int = 0
+        self.last_health_check: float = 0
+        self.start_time: float = time.time()
 
-# CSS_Selector
-BANGUMI_TITLE_SELECTOR = 'bangumi-title'
+    async def initialize(self) -> None:
+        """初始化所有组件"""
+        self.http_client = httpx.AsyncClient(timeout=self.config.request_timeout)
+        await self.pikpak_client.initialize()
+        logger.info("所有组件初始化完成")
 
-# RSS_Key
-RSS_KEY_TITLE = 'title'
-RSS_KEY_LINK = 'link'
-RSS_KEY_TORRENT = 'enclosures'
-RSS_KEY_PUB = 'published'
-RSS_KEY_BGM_TITLE = 'bangumi_title'
+    async def login(self) -> None:
+        """登录 PikPak"""
+        await self.pikpak_client.login()
 
-# Regex
-CHAR_RULE = "\"M\"\\a/ry/ h**ad:>> a\\/:*?\"| li*tt|le|| la\"mb.?"
+    @async_retry(max_retries=3, initial_delay=1.0)
+    async def download_torrent_file(self, torrent_url: str, save_path: str) -> bool:
+        """下载种子文件
 
-# 加载基本配置文件，并更新全局变量
-def load_config():
-    global HTTP_PROXY, HTTPS_PROXY, SOCKS_PROXY, ENABLE_PROXY, NTFY_URL, ENABLE_NOTIFICATIONS
-    
-    if os.path.exists(CONFIG_FILE):
+        Args:
+            torrent_url: 种子 URL
+            save_path: 保存路径
+
+        Returns:
+            是否成功
+        """
         try:
-            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                config = json.load(f)
-            if config.get("username") and config.get("password") and config.get("path") and config.get("rss"):
-                USER[0] = config.get("username")
-                PASSWORD[0] = config.get("password")
-                PATH[0] = config.get("path")
-                RSS[0] = config.get("rss")
-            
-            # 加载代理配置
-            HTTP_PROXY = config.get("http_proxy", "")
-            HTTPS_PROXY = config.get("https_proxy", "")
-            SOCKS_PROXY = config.get("socks_proxy", "")
-            ENABLE_PROXY = config.get("enable_proxy", False)
-            logging.info("代理配置加载成功！")
-            
-            # 加载通知配置
-            NTFY_URL = config.get("ntfy_url", "")
-            ENABLE_NOTIFICATIONS = config.get("enable_notifications", False)
-            if ENABLE_NOTIFICATIONS and NTFY_URL:
-                logging.info(f"通知配置加载成功！通知地址：{NTFY_URL}")
-            
-            logging.info("配置文件加载成功！")
+            response = await self.http_client.get(torrent_url)
+            response.raise_for_status()
+
+            ensure_directory(os.path.dirname(save_path))
+
+            with open(save_path, "wb") as f:
+                f.write(response.content)
+
+            logger.info(f"种子下载成功: {os.path.basename(save_path)}")
+            return True
+
         except Exception as e:
-            logging.error(f"加载配置文件失败: {str(e)}")
-    else:
-        logging.info("配置文件不存在，使用默认设置。")
+            logger.error(f"种子下载失败: {e}")
+            return False
 
+    async def process_torrent(self, torrent_info: TorrentInfo) -> bool:
+        """处理单个种子
 
-# 如果存在保存的客户端状态，则优先从 CLIENT_STATE_FILE 中加载token
-# 否则根据用户名和密码新建客户端对象
-# 此外，检验客户端是否是当前用户的，若不是则重新登录
-def init_clients():
-    global last_refresh_time
-    client = None
-    
-    # 设置环境变量代理，支持HTTP/HTTPS/SOCKS代理
-    if ENABLE_PROXY:
-        if HTTP_PROXY:
-            os.environ['HTTP_PROXY'] = HTTP_PROXY
-            os.environ['http_proxy'] = HTTP_PROXY
-        if HTTPS_PROXY:
-            os.environ['HTTPS_PROXY'] = HTTPS_PROXY
-            os.environ['https_proxy'] = HTTPS_PROXY
-        if SOCKS_PROXY:
-            os.environ['SOCKS_PROXY'] = SOCKS_PROXY
-            os.environ['socks_proxy'] = SOCKS_PROXY
-        
-        logging.info(f"代理环境变量已设置: HTTP_PROXY={os.environ.get('HTTP_PROXY', '')}, HTTPS_PROXY={os.environ.get('HTTPS_PROXY', '')}, SOCKS_PROXY={os.environ.get('SOCKS_PROXY', '')}")
-        logging.info(f"代理配置已启用")
-    
-    if os.path.exists(CLIENT_STATE_FILE):
+        Args:
+            torrent_info: 种子信息
+
+        Returns:
+            是否成功处理
+        """
+        torrent_name = torrent_info.torrent_url.split("/")[-1]
+        folder_path = f"torrent/{torrent_info.bangumi_title}"
+        local_path = os.path.join(folder_path, torrent_name)
+
+        if os.path.exists(local_path):
+            logger.debug(f"种子已存在，跳过: {torrent_name}")
+            return False
+
+        if not await self.download_torrent_file(torrent_info.torrent_url, local_path):
+            return False
+
         try:
-            with open(CLIENT_STATE_FILE, "r", encoding="utf-8") as f:
-                config = json.load(f)
-            last_refresh_time = config.get("last_refresh_time", 0)
-            client_token = config.get("client_token", {})
-            if client_token and client_token.get("username") == USER[0]:
-                client = PikPakApi.from_dict(client_token)
-                logging.info("成功从客户端状态文件加载登录状态！")
-            else:
-                client = PikPakApi(username=USER[0], password=PASSWORD[0])
+            folder_id = await self.pikpak_client.get_or_create_folder(
+                torrent_info.bangumi_title
+            )
+
+            info_hash = torrent_name.rsplit(".", 1)[0]
+            magnet_link = f"magnet:?xt=urn:btih:{info_hash}"
+
+            if await self.pikpak_client.check_magnet_exists(folder_id, magnet_link):
+                logger.info(f"磁力链接已存在，跳过: {torrent_name}")
+                return False
+
+            task_id, task_name = await self.pikpak_client.offline_download(
+                torrent_info.torrent_url, folder_id, torrent_info.bangumi_title
+            )
+
+            await self.notifier.send_async(
+                "番剧更新", f"📺 {torrent_info.bangumi_title} 更新啦！快去看看吧！🎉"
+            )
+
+            return True
+
         except Exception as e:
-            logging.warning(f"加载客户端状态失败: {str(e)}，将重新创建客户端。")
-            client = PikPakApi(username=USER[0], password=PASSWORD[0])
-    else:
-        client = PikPakApi(username=USER[0], password=PASSWORD[0])
-    
-    PIKPAK_CLIENTS[0] = client
+            logger.error(f"处理种子失败 {torrent_name}: {e}")
+            return False
 
+    async def run_once(self) -> None:
+        """执行一次完整流程"""
+        await self.pikpak_client.refresh_token()
 
-# 保存基本配置到 CONFIG_FILE
-def update_config():
-    config = {
-        "username": USER[0],
-        "password": PASSWORD[0],
-        "path": PATH[0],
-        "rss": RSS[0],
-        "http_proxy": HTTP_PROXY,
-        "https_proxy": HTTPS_PROXY,
-        "socks_proxy": SOCKS_PROXY,
-        "enable_proxy": ENABLE_PROXY,
-        "ntfy_url": NTFY_URL,
-        "enable_notifications": ENABLE_NOTIFICATIONS,
-    }
-    try:
-        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(config, f, indent=4, ensure_ascii=False)
-        logging.info("配置文件更新成功！")
-    except Exception as e:
-        logging.error(f"配置文件更新失败: {str(e)}")
+        self.torrent_list = await self.rss_parser.parse()
 
-# 发送 ntfy.sh 通知
-async def send_notification(title, message):
-    """发送通知到 ntfy.sh
-    
-    Args:
-        title: 通知标题
-        message: 通知内容
-    """
-    if not ENABLE_NOTIFICATIONS or not NTFY_URL:
-        return
-    
-    try:
-        # 设置代理（如果启用）
-        proxies = {}
-        if ENABLE_PROXY:
-            if HTTP_PROXY:
-                proxies['http'] = HTTP_PROXY
-            if HTTPS_PROXY:
-                proxies['https'] = HTTPS_PROXY
-            elif HTTP_PROXY:
-                proxies['https'] = HTTP_PROXY
-        
-        # 发送通知 - 确保 headers 中只使用 ASCII 字符
-        clean_title = title.encode('ascii', 'ignore').decode('ascii')  # 移除非ASCII字符
-        headers = {
-            'Title': clean_title,
-            'Priority': 'default',
-            'Tags': 'anime,pikpak'
-        }
-        
-        response = requests.post(
-            NTFY_URL,
-            data=message.encode(encoding='utf-8'),
-            headers=headers,
-            proxies=proxies if proxies else None,
-            timeout=10
-        )
-        
-        if response.status_code == 200:
-            logging.info(f"通知发送成功: {title}")
-        else:
-            logging.warning(f"通知发送失败，状态码: {response.status_code}")
-            
-    except Exception as e:
-        logging.error(f"发送通知时出错: {str(e)}")
-
-# 读取bangumi番剧名称
-async def read_bangumi_title(mikan_episode_url):
-    # 设置代理，支持HTTP/HTTPS/SOCKS代理
-    if ENABLE_PROXY:
-        proxy_dict = {}
-        if HTTP_PROXY:
-            proxy_dict['http'] = HTTP_PROXY
-        if HTTPS_PROXY:
-            proxy_dict['https'] = HTTPS_PROXY
-        elif HTTP_PROXY:
-            proxy_dict['https'] = HTTP_PROXY
-        
-        if proxy_dict:
-            proxy_handler = urllib.request.ProxyHandler(proxy_dict)
-            opener = urllib.request.build_opener(proxy_handler)
-            urllib.request.install_opener(opener)
-            logging.info(f"urllib代理已设置: {proxy_dict}")
-    
-    soup = BeautifulSoup(urllib.request.urlopen(mikan_episode_url))
-    title = soup.select_one("p",{"class": BANGUMI_TITLE_SELECTOR}).text.strip()
-    return title
-
-# 保存token到 CLIENT_STATE_FILE
-def save_client():
-    config = {
-        "last_refresh_time": last_refresh_time,
-        "client_token": PIKPAK_CLIENTS[0].to_dict(),
-    }
-    try:
-        with open(CLIENT_STATE_FILE, "w", encoding="utf-8") as f:
-            json.dump(config, f, indent=4, ensure_ascii=False)
-        logging.info("客户端状态保存成功！")
-    except Exception as e:
-        logging.error(f"客户端状态保存失败: {str(e)}")
-
-
-# 1. 先尝试调用 file_list() 检查 token 是否有效；
-# 2. 若调用失败，则重新使用用户名密码登录；
-async def login(account_index):
-    client = PIKPAK_CLIENTS[account_index]
-    try:
-        # 尝试用 token 调用 file_list() 检查 token 是否有效
-        await client.file_list(parent_id=PATH[account_index])
-        logging.info(f"账号 {USER[account_index]} Token 有效")
-    except Exception as e:
-        logging.warning(f"使用 token 读取文件列表失败: {str(e)}，将重新登录。")
-        try:
-            await client.login()
-        except Exception as e:
-            logging.error(f"账号 {USER[account_index]} 登录失败: {str(e)}")
+        if not self.torrent_list:
+            logger.info("RSS 源没有更新")
             return
 
-    logging.info(f"账号 {USER[account_index]} 登录成功！")
+        need_login = False
+        for torrent_info in self.torrent_list:
+            torrent_name = torrent_info.torrent_url.split("/")[-1]
+            local_path = f"torrent/{torrent_info.bangumi_title}/{torrent_name}"
 
-    await auto_refresh_token()
+            if not os.path.exists(local_path):
+                need_login = True
+                break
 
+        if need_login:
+            await self.login()
 
-# 定时刷新 token
-async def auto_refresh_token():
-    global last_refresh_time
-    current_time = time.time()
-    if current_time - last_refresh_time >= INTERVAL_TIME_REFRESH:
-        try:
-            client = PIKPAK_CLIENTS[0]
-            await client.refresh_access_token()
-            logging.info("token 刷新成功！")
-            last_refresh_time = current_time
-            save_client()
-        except Exception as e:
-            logging.error(f"token 刷新失败: {str(e)}")
-            last_refresh_time = 0
+            processed_count = 0
+            for torrent_info in self.torrent_list:
+                try:
+                    if await self.process_torrent(torrent_info):
+                        processed_count += 1
+                except Exception as e:
+                    logger.error(f"处理种子失败: {e}")
+                    await self.notifier.send_async("处理错误", f"❌ 处理种子失败: {e}")
+                    continue
 
-
-# 解析 RSS 并返回种子列表
-async def get_rss():
-    rss = feedparser.parse(RSS[0])
-    return [
-        {
-            RSS_KEY_TITLE: entry[RSS_KEY_TITLE],
-            RSS_KEY_LINK: entry[RSS_KEY_LINK],
-            RSS_KEY_TORRENT: entry[RSS_KEY_TORRENT][0]['url'],
-            RSS_KEY_PUB: entry[RSS_KEY_PUB].split("T")[0],
-            RSS_KEY_BGM_TITLE: sanitize_filepath(await read_bangumi_title(entry[RSS_KEY_LINK]))
-        }
-        for entry in rss['entries']
-    ]
-
-
-# 根据番剧名称创建文件夹
-async def get_folder_id(account_index, torrent):
-    client = PIKPAK_CLIENTS[account_index]
-    folder_path = PATH[account_index]
-    title = await get_title(torrent)
-    # 获取文件夹列表
-    folder_list = await client.file_list(parent_id=folder_path)
-    for file in folder_list.get('files', []):
-        if file['name'] == title:
-            return file['id']
-    # 未找到则创建新文件夹
-    folder_info = await client.create_folder(name=title, parent_id=folder_path)
-    return folder_info['file']['id']
-
-
-# 通过解析 RSS 查找 torrent 对应的番剧名称
-async def get_title(torrent):
-    for entry in mylist:
-        if entry[RSS_KEY_TORRENT] == torrent:
-            logging.info(f"种子标题: {entry[RSS_KEY_TITLE]}")
-            logging.info(f"番剧标题: {entry[RSS_KEY_BGM_TITLE]}")
-            return entry[RSS_KEY_BGM_TITLE]
-    return None
-
-
-# 提交离线磁力任务至 PikPak
-async def magnet_upload(account_index, file_url, folder_id, bangumi_title=None):
-    client = PIKPAK_CLIENTS[account_index]
-    try:
-        result = await client.offline_download(file_url=file_url, parent_id=folder_id)
-    except Exception as e:
-        logging.error(
-            f"账号 {USER[account_index]} 添加离线磁力任务失败: {e}")
-        return None, None
-    
-    logging.info(f"账号 {USER[account_index]} 添加离线磁力任务: {file_url}")
-    
-    # 发送成功通知
-    if bangumi_title:
-        title = "番剧更新"
-        message = f"📺 {bangumi_title}更新啦！快去看看吧！ 🎉"
-    else:
-        title = "PikPak 任务"  
-        message = f"✅ 成功添加离线任务：{result['task']['name']} 🎉"
-    
-    await send_notification(title, message)
-    
-    return result['task']['id'], result['task']['name']
-
-
-# 下载 torrent 文件并保存到本地
-async def download_torrent(folder, name, torrent):
-    # 代理配置已通过环境变量设置，httpx会自动使用
-    async with httpx.AsyncClient() as client:
-        response = await client.get(torrent)
-    os.makedirs(folder, exist_ok=True)
-    with open(f'{folder}/{name}', 'wb') as f:
-        f.write(response.content)
-    logging.info(f"Finished downloading torrent: {name}")
-    return f'{folder}/{name}'
-
-
-# 检查本地是否存在种子文件；若不存在则下载并提交离线任务
-async def check_torrent(account_index, folder, name, torrent, check_mode: str):
-    if not os.path.exists(f'{folder}/{name}'):
-        if check_mode == "local":
-            return True
+            logger.info(f"本次处理完成，成功处理 {processed_count} 个种子")
         else:
-            await download_torrent(folder, name, torrent)
-            folder_id = await get_folder_id(account_index, torrent)
-            
-            #遍历该文件夹下的文件，若已存在该种子则不再创建
-            info_hash = name.rsplit('.', 1)[0]
-            magnet_link = f"magnet:?xt=urn:btih:{info_hash}"
-            client = PIKPAK_CLIENTS[account_index]
-            sub_folder_list = await client.file_list(parent_id=folder_id)
-            for sub_file in sub_folder_list.get('files', []):
-                if sub_file['params']['url'] == magnet_link:
-                    return False
-            
-            # 获取番剧标题用于通知
-            bangumi_title = await get_title(torrent)
-            await magnet_upload(account_index, torrent, folder_id, bangumi_title)
-            return True
-    else:
-        return False
+            logger.info("所有种子已存在，无需处理")
+
+        # 成功执行后重置错误计数
+        self.error_count = 0
+
+    async def health_check(self) -> None:
+        """健康检查
+
+        记录运行状态，包括：
+        - 运行时长
+        - 处理统计
+        - 错误计数
+        """
+        if not self.config.enable_health_check:
+            return
+
+        current_time = time.time()
+
+        if current_time - self.last_health_check < self.config.health_check_interval:
+            return
+
+        uptime = current_time - self.start_time
+        hours = int(uptime // 3600)
+        minutes = int((uptime % 3600) // 60)
+
+        logger.info("=" * 60)
+        logger.info("健康检查报告")
+        logger.info(f"运行时长: {hours}小时{minutes}分钟")
+        logger.info(f"错误计数: {self.error_count}")
+        logger.info(f"RSS 条目: {len(self.torrent_list)}")
+        logger.info("=" * 60)
+
+        self.last_health_check = current_time
+
+    async def check_error_alert(self) -> None:
+        """检查错误告警
+
+        如果连续错误次数达到阈值，发送告警通知。
+        """
+        if not self.config.enable_error_alert:
+            return
+
+        if self.error_count >= self.config.error_alert_threshold:
+            logger.warning(f"连续错误次数达到阈值: {self.error_count}")
+
+            await self.notifier.send_async(
+                "⚠️ Bangumi-PikPak 告警",
+                f"连续错误次数: {self.error_count}\n请检查服务状态！",
+            )
+
+            # 重置计数，避免重复告警
+            self.error_count = 0
+
+    async def cleanup(self) -> None:
+        """清理资源"""
+        if self.http_client:
+            await self.http_client.aclose()
+            logger.info("HTTP 客户端已关闭")
+
+        await self.pikpak_client.close()
+        logger.info("资源清理完成")
 
 
-async def main():
-    global mylist
-    # 刷新 token
-    await auto_refresh_token()
-    # 获取 RSS 种子列表
-    mylist = await get_rss()
-    # 先检查本地文件是否存在，减少重复请求次数
-    needLogin = False
-    for entry in mylist:
-        name = entry[RSS_KEY_TORRENT].split('/')[-1]
-        torrent = entry[RSS_KEY_TORRENT]
-        folder = f'torrent/{entry[RSS_KEY_BGM_TITLE]}'
-        needLogin = await check_torrent(0, folder, name, torrent, "local")
-        if needLogin:
-            break
-
-    # 如果需要下载文件，则登录（若有token，实际上是复用之前的连接状态）
-    if needLogin:
-        await asyncio.gather(*[login(i) for i in range(len(USER))])
-        # 遍历所有账号和 RSS 列表，串行处理避免文件夹创建冲突
-        for i in range(len(USER)):
-            for entry in mylist:
-                name = entry[RSS_KEY_TORRENT].split('/')[-1]
-                torrent = entry[RSS_KEY_TORRENT]
-                folder = f'torrent/{entry[RSS_KEY_BGM_TITLE]}'
-                await check_torrent(i, folder, name, torrent, "network")
-    else:
-        logging.info("RSS源没有新的更新")
-
-
-def setup_logging(
-    log_file="rss-pikpak.log",
-    log_level=logging.INFO,
-    max_bytes=10*1024*1024,  # 10MB
-    backup_count=5
-):
-    """配置日志系统
-    
-    Args:
-        log_file: 日志文件路径
-        log_level: 日志级别
-        max_bytes: 单个日志文件最大大小
-        backup_count: 保留的日志文件数量
-    """
+def main():
+    """主函数"""
     try:
-        # 创建logger对象
-        logger = logging.getLogger()
-        logger.setLevel(log_level)
-
-        # 日志格式
-        formatter = logging.Formatter(
-            fmt="%(asctime)s [%(levelname)s] %(filename)s:%(lineno)d - %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S"
-        )
-
-        # 文件处理器(启用日志轮转)
-        file_handler = RotatingFileHandler(
-            filename=log_file,
-            maxBytes=max_bytes,
-            backupCount=backup_count,
-            encoding='utf-8'
-        )
-        file_handler.setFormatter(formatter)
-        logger.addHandler(file_handler)
-
-        # 控制台处理器
-        console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setFormatter(formatter)
-        logger.addHandler(console_handler)
-
-        logging.info("日志系统初始化成功")
-        return logger
-
+        config = load_config(CONFIG_FILE)
     except Exception as e:
-        print(f"日志系统初始化失败: {str(e)}")
+        print(f"❌ 配置加载失败: {e}", file=sys.stderr)
         sys.exit(1)
 
-if __name__ == "__main__":
-    setup_logging()
-    load_config()  
-    init_clients()
-    update_config()  # 将当前基本配置写入文件（用户将配置写在main.py内的情况）
+    setup_logging(
+        log_level=config.log_level,
+        max_bytes=config.log_max_bytes,
+        backup_count=config.log_backup_count,
+        enable_sensitive_filter=config.log_sensitive_filter,
+        json_format=config.log_json_format,
+    )
 
-    # 处理退出情况
+    downloader = BangumiDownloader(config)
+
     def signal_handler(sig, frame):
-        logging.info("正在保存状态并退出...")
-        save_client()  # 保存客户端状态
-        update_config()  # 保存配置
+        logger.info("收到退出信号，正在保存状态...")
+        asyncio.run(downloader.cleanup())
         sys.exit(0)
+
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
+    try:
+        asyncio.run(downloader.initialize())
+    except Exception as e:
+        logger.error(f"❌ 初始化失败: {e}")
+        sys.exit(1)
+
+    save_config(config, CONFIG_FILE)
+
+    logger.info("=" * 60)
+    logger.info("Bangumi-PikPak 启动成功")
+    logger.info(f"账号: {config.username}")
+    logger.info(f"RSS 检查间隔: {config.rss_check_interval} 秒")
+    logger.info(f"通知: {'已启用' if config.enable_notifications else '未启用'}")
+    logger.info(f"代理: {'已启用' if config.enable_proxy else '未启用'}")
+    logger.info(f"健康检查: {'已启用' if config.enable_health_check else '未启用'}")
+    logger.info(f"错误告警: {'已启用' if config.enable_error_alert else '未启用'}")
+    logger.info("=" * 60)
+
     while True:
-        asyncio.run(main())
-        time.sleep(INTERVAL_TIME_RSS)
+        try:
+            asyncio.run(downloader.run_once())
+            asyncio.run(downloader.health_check())
+        except Exception as e:
+            downloader.error_count += 1
+            logger.error(
+                f"❌ 运行出错 ({downloader.error_count}次): {e}", exc_info=True
+            )
+            asyncio.run(downloader.check_error_alert())
+            asyncio.run(
+                downloader.notifier.send_async(
+                    "运行错误", f"❌ 运行出错 ({downloader.error_count}次): {e}"
+                )
+            )
+
+        time.sleep(config.rss_check_interval)
+
+
+if __name__ == "__main__":
+    main()
