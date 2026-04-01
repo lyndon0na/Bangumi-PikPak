@@ -13,6 +13,31 @@
 - ⚙️ **改进配置**：更好的配置文件管理
 - 📊 **完善日志**：详细的日志记录系统
 - 📚 **项目文档**：完整的安装和使用说明
+- 🖥️ **Web 界面**：新增 Web 管理界面（密码保护）
+
+---
+
+## 🖥️ Web 界面
+
+Bangumi-PikPak 现已支持 Web 管理界面，提供：
+
+- **仪表盘监控**：查看运行状态、最近更新、番剧列表
+- **日志查看**：实时查看和筛选运行日志
+- **配置管理**：查看和修改配置（敏感信息脱敏）
+- **服务控制**：启动/停止/重启服务（用户级部署）
+
+**启用方式**：
+```json
+{
+  "web_enabled": true,
+  "web_port": 8080,
+  "web_password": "your_secure_password"
+}
+```
+
+**访问地址**：`http://your_vps_ip:8080`
+
+**详细使用指南**：参见 [WEB_GUIDE.md](docs/WEB_GUIDE.md)
 
 ---
 
@@ -38,11 +63,52 @@
 - 有效的 PikPak 账号
 - Mikan Project 的 RSS 订阅链接
 
-### 安装步骤
+### 🚀 一键部署（推荐）
+
+**使用一键部署脚本快速安装**：
+
+```bash
+# 方式一：直接运行（推荐，自动模式）
+curl -fsSL https://raw.githubusercontent.com/lyndon0na/Bangumi-PikPak/main/quick-deploy.sh | bash
+
+# 方式二：下载后运行
+wget https://raw.githubusercontent.com/lyndon0na/Bangumi-PikPak/main/quick-deploy.sh
+bash quick-deploy.sh
+
+# 方式三：自定义目录
+bash quick-deploy.sh /your/custom/path
+
+# 方式四：交互模式（会询问每个步骤）
+bash quick-deploy.sh --interactive
+```
+
+**一键部署脚本功能**：
+- ✅ 自动克隆项目（默认目录：~/Bangumi-PikPak）
+- ✅ 创建虚拟环境并安装所有依赖
+- ✅ 智能配置处理（检测已有配置、验证格式、自动升级旧配置）
+- ✅ 安装用户级 systemd 服务（无需sudo权限）
+- ✅ 启动服务并显示完整管理信息
+
+**两种运行模式**：
+- **自动模式**（默认）：快速部署，使用标准配置，非交互式
+- **交互模式**（`--interactive`）：逐步询问，适合自定义需求
+
+**部署完成后**：
+- Web界面访问： `http://localhost:8080`
+- 服务管理： `systemctl --user start/stop/restart bangumi-pikpak`
+- 查看日志： `journalctl --user -u bangumi-pikpak -f`
+
+**详细文档**： [用户级部署指南](docs/USER_DEPLOYMENT.md) | [一键部署详解](docs/QUICK_DEPLOY.md)
+
+---
+
+### 手动安装步骤
+
+如果你需要自定义安装或了解详细步骤：
 
 1. **克隆项目**
 ```bash
-git clone https://github.com/YinBuLiao/Bangumi-PikPak.git
+git clone https://github.com/lyndon0na/Bangumi-PikPak.git
 cd Bangumi-PikPak
 ```
 
@@ -149,31 +215,57 @@ python main.py
 
 > **📖 完整部署指南**：[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) - 包含详细步骤和常见问题
 >
+> **📖 用户级部署**：[docs/USER_DEPLOYMENT.md](docs/USER_DEPLOYMENT.md) - 无需 sudo 权限的部署方式（推荐）
+>
 > **📖 运维指南**：[docs/OPERATIONS.md](docs/OPERATIONS.md) - systemd 服务、监控、告警
 
 ### systemd 服务部署（推荐）
 
-**一键安装**：
+有两种部署方式：
+
+#### 方式一：用户级服务（推荐）
+
+**优势**：不需要 sudo 权限，Web 界面可直接控制服务
 
 ```bash
 # 进入项目目录
 cd Bangumi-PikPak
 
-# 运行安装脚本（自动检测路径和用户）
+# 运行安装脚本（不需要 sudo）
+./deploy/install-user-service.sh
+
+# 启用 linger（让服务在后台运行）
+sudo loginctl enable-linger $USER
+```
+
+**服务管理**：
+```bash
+systemctl --user start bangumi-pikpak     # 启动
+systemctl --user stop bangumi-pikpak      # 停止
+systemctl --user restart bangumi-pikpak   # 重启
+systemctl --user status bangumi-pikpak    # 查看状态
+journalctl --user -u bangumi-pikpak -f    # 查看日志
+```
+
+#### 方式二：系统级服务
+
+**适用场景**：多用户共享、系统级权限管理
+
+```bash
+# 进入项目目录
+cd Bangumi-PikPak
+
+# 运行安装脚本（需要 sudo）
 sudo ./deploy/install-service.sh
 ```
 
 **服务管理**：
-
 ```bash
-# 启动服务
-sudo systemctl start bangumi-pikpak
-
-# 查看状态
-sudo systemctl status bangumi-pikpak
-
-# 查看日志
-sudo journalctl -u bangumi-pikpak -f
+sudo systemctl start bangumi-pikpak     # 启动
+sudo systemctl stop bangumi-pikpak      # 停止
+sudo systemctl restart bangumi-pikpak   # 重启
+sudo systemctl status bangumi-pikpak    # 查看状态
+sudo journalctl -u bangumi-pikpak -f    # 查看日志
 
 # 健康检查
 ./deploy/health-check.sh
@@ -244,7 +336,7 @@ PikPak 根目录/
 ### 开发环境设置
 ```bash
 # 克隆项目
-[git clone https://github.com/hrWong/Bangumi-PikPak.git](https://github.com/YinBuLiao/Bangumi-PikPak.git)
+[git clone https://github.com/lyndon0na/Bangumi-PikPak.git](https://github.com/lyndon0na/Bangumi-PikPak.git)
 cd Bangumi-PikPak
 
 # 创建虚拟环境

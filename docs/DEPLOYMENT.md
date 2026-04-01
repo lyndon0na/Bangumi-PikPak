@@ -25,7 +25,7 @@
 
 ```bash
 # 克隆到任意目录
-git clone https://github.com/YinBuLiao/Bangumi-PikPak.git
+git clone https://github.com/lyndon0na/Bangumi-PikPak.git
 cd Bangumi-PikPak
 ```
 
@@ -72,9 +72,50 @@ python main.py
 
 ### 5. 安装为系统服务（推荐）
 
+有两种部署方式可选：
+
+#### 方式一：用户级 systemd 服务（推荐）
+
+**优点：**
+- 不需要 sudo 权限
+- Web 界面可直接控制服务
+- 更安全，权限隔离
+
 ```bash
-# 一键安装 systemd 服务
+# 安装用户级服务（不需要 sudo）
+./deploy/install-user-service.sh
+
+# 如果脚本提示需要启用 linger，运行一次：
+sudo loginctl enable-linger $USER
+```
+
+安装后管理命令：
+```bash
+systemctl --user start bangumi-pikpak     # 启动
+systemctl --user stop bangumi-pikpak      # 停止
+systemctl --user restart bangumi-pikpak   # 重启
+systemctl --user status bangumi-pikpak    # 查看状态
+journalctl --user -u bangumi-pikpak -f    # 查看日志
+```
+
+#### 方式二：系统级 systemd 服务
+
+**适用场景：**
+- 需要系统级权限管理
+- 多用户共享服务
+
+```bash
+# 一键安装 systemd 服务（需要 sudo）
 sudo ./deploy/install-service.sh
+```
+
+安装后管理命令：
+```bash
+sudo systemctl start bangumi-pikpak     # 启动
+sudo systemctl stop bangumi-pikpak      # 停止
+sudo systemctl restart bangumi-pikpak   # 重启
+sudo systemctl status bangumi-pikpak    # 查看状态
+sudo journalctl -u bangumi-pikpak -f    # 查看日志
 ```
 
 安装脚本会：

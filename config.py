@@ -52,6 +52,12 @@ class Config:
     enable_error_alert: bool = False  # 是否启用错误告警
     error_alert_threshold: int = 3  # 连续错误次数阈值
 
+    web_enabled: bool = False  # 是否启用Web界面
+    web_host: str = "0.0.0.0"  # Web服务绑定地址
+    web_port: int = 8080  # Web服务端口
+    web_password: str = ""  # Web访问密码
+    web_secret_key: str = ""  # JWT密钥(自动生成)
+
     def validate(self) -> list[str]:
         """验证配置项
 
@@ -117,6 +123,12 @@ class Config:
         valid_log_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
         if self.log_level.upper() not in valid_log_levels:
             errors.append(f"log_level 应该是 {valid_log_levels} 之一: {self.log_level}")
+
+        if self.web_enabled:
+            if self.web_port < 1 or self.web_port > 65535:
+                errors.append(f"web_port 应该在 1-65535 之间: {self.web_port}")
+            if not self.web_password:
+                errors.append("启用了Web界面但未设置 web_password")
 
         return errors
 
@@ -203,6 +215,11 @@ def load_config(config_file: str) -> Config:
         health_check_interval=data.get("health_check_interval", 3600),
         enable_error_alert=data.get("enable_error_alert", False),
         error_alert_threshold=data.get("error_alert_threshold", 3),
+        web_enabled=data.get("web_enabled", False),
+        web_host=data.get("web_host", "0.0.0.0"),
+        web_port=data.get("web_port", 8080),
+        web_password=data.get("web_password", ""),
+        web_secret_key=data.get("web_secret_key", ""),
     )
 
     errors = config.validate()
@@ -239,6 +256,11 @@ def save_config(config: Config, config_file: str) -> None:
         "log_level": config.log_level,
         "log_max_bytes": config.log_max_bytes,
         "log_backup_count": config.log_backup_count,
+        "web_enabled": config.web_enabled,
+        "web_host": config.web_host,
+        "web_port": config.web_port,
+        "web_password": config.web_password,
+        "web_secret_key": config.web_secret_key,
     }
 
     try:

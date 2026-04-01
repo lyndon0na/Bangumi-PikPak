@@ -1,0 +1,242 @@
+{% extends "base.html" %}
+
+{% block title %}配置 - Bangumi-PikPak{% endblock %}
+
+{% block content %}
+<div class="config-page">
+    <div class="alert alert-warning">
+        ⚠️ 注意: 修改配置后需要重启服务才能生效。密码等敏感信息已脱敏显示。
+    </div>
+    
+    <div class="config-tabs">
+        <button class="tab-btn active" onclick="showTab('basic')">基本配置</button>
+        <button class="tab-btn" onclick="showTab('network')">网络配置</button>
+        <button class="tab-btn" onclick="showTab('web')">Web配置</button>
+        <button class="tab-btn" onclick="showTab('advanced')">高级配置</button>
+    </div>
+    
+    <form id="config-form" onsubmit="saveConfig(event)">
+        <div class="config-section" id="basic-tab">
+            <h3>基本配置</h3>
+            
+            <div class="form-group">
+                <label>PikPak账号邮箱</label>
+                <input type="email" name="username" value="{{ config.username }}" disabled>
+                <small>账号信息不能在Web界面修改</small>
+            </div>
+            
+            <div class="form-group">
+                <label>目标文件夹ID</label>
+                <input type="text" name="path" value="{{ config.path }}" disabled>
+                <small>文件夹ID不能在Web界面修改</small>
+            </div>
+            
+            <div class="form-group">
+                <label>RSS检查间隔 (秒)</label>
+                <input type="number" name="rss_check_interval" 
+                       value="{{ config.rss_check_interval }}" min="60">
+            </div>
+            
+            <div class="form-group">
+                <label>启用通知</label>
+                <select name="enable_notifications">
+                    <option value="true" {% if config.enable_notifications %}selected{% endif %}>启用</option>
+                    <option value="false" {% if not config.enable_notifications %}selected{% endif %}>禁用</option>
+                </select>
+            </div>
+        </div>
+        
+        <div class="config-section hidden" id="network-tab">
+            <h3>网络配置</h3>
+            
+            <div class="form-group">
+                <label>启用代理</label>
+                <select name="enable_proxy">
+                    <option value="true" {% if config.enable_proxy %}selected{% endif %}>启用</option>
+                    <option value="false" {% if not config.enable_proxy %}selected{% endif %}>禁用</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label>HTTP代理</label>
+                <input type="text" name="http_proxy" value="{{ config.http_proxy }}"
+                       placeholder="http://127.0.0.1:7890">
+            </div>
+            
+            <div class="form-group">
+                <label>HTTPS代理</label>
+                <input type="text" name="https_proxy" value="{{ config.https_proxy }}"
+                       placeholder="http://127.0.0.1:7890">
+            </div>
+            
+            <div class="form-group">
+                <label>SOCKS代理</label>
+                <input type="text" name="socks_proxy" value="{{ config.socks_proxy }}"
+                       placeholder="socks5://127.0.0.1:7890">
+            </div>
+            
+            <div class="form-group">
+                <label>最大重试次数</label>
+                <input type="number" name="max_retries" 
+                       value="{{ config.max_retries }}" min="0" max="10">
+            </div>
+            
+            <div class="form-group">
+                <label>请求超时 (秒)</label>
+                <input type="number" name="request_timeout" 
+                       value="{{ config.request_timeout }}" min="5" max="300">
+            </div>
+        </div>
+        
+        <div class="config-section hidden" id="web-tab">
+            <h3>Web界面配置</h3>
+            
+            <div class="form-group">
+                <label>启用Web界面</label>
+                <select name="web_enabled">
+                    <option value="true" {% if config.web_enabled %}selected{% endif %}>启用</option>
+                    <option value="false" {% if not config.web_enabled %}selected{% endif %}>禁用</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label>Web端口</label>
+                <input type="number" name="web_port" 
+                       value="{{ config.web_port }}" min="1" max="65535">
+            </div>
+            
+            <div class="form-group">
+                <label>Web访问密码</label>
+                <input type="password" name="web_password" value="***"
+                       placeholder="输入新密码以修改">
+                <small>显示为***表示已设置密码</small>
+            </div>
+        </div>
+        
+        <div class="config-section hidden" id="advanced-tab">
+            <h3>高级配置</h3>
+            
+            <div class="form-group">
+                <label>日志级别</label>
+                <select name="log_level">
+                    <option value="DEBUG" {% if config.log_level == 'DEBUG' %}selected{% endif %}>DEBUG</option>
+                    <option value="INFO" {% if config.log_level == 'INFO' %}selected{% endif %}>INFO</option>
+                    <option value="WARNING" {% if config.log_level == 'WARNING' %}selected{% endif %}>WARNING</option>
+                    <option value="ERROR" {% if config.log_level == 'ERROR' %}selected{% endif %}>ERROR</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label>启用健康检查</label>
+                <select name="enable_health_check">
+                    <option value="true" {% if config.enable_health_check %}selected{% endif %}>启用</option>
+                    <option value="false" {% if not config.enable_health_check %}selected{% endif %}>禁用</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label>健康检查间隔 (秒)</label>
+                <input type="number" name="health_check_interval" 
+                       value="{{ config.health_check_interval }}" min="60">
+            </div>
+            
+            <div class="form-group">
+                <label>启用错误告警</label>
+                <select name="enable_error_alert">
+                    <option value="true" {% if config.enable_error_alert %}selected{% endif %}>启用</option>
+                    <option value="false" {% if not config.enable_error_alert %}selected{% endif %}>禁用</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label>错误告警阈值</label>
+                <input type="number" name="error_alert_threshold" 
+                       value="{{ config.error_alert_threshold }}" min="1">
+            </div>
+        </div>
+        
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary">保存配置</button>
+            <button type="button" class="btn btn-danger" onclick="restartService()">重启服务</button>
+        </div>
+    </form>
+    
+    <div id="result-message" class="alert hidden"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function showTab(tabName) {
+        document.querySelectorAll('.config-section').forEach(section => {
+            section.classList.add('hidden');
+        });
+        
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.classList.remove('active');
+        });
+        
+        document.getElementById(tabName + '-tab').classList.remove('hidden');
+        event.target.classList.add('active');
+    }
+    
+    async function saveConfig(event) {
+        event.preventDefault();
+        
+        const form = document.getElementById('config-form');
+        const formData = new FormData(form);
+        const configData = {};
+        
+        formData.forEach((value, key) => {
+            if (value === 'true') configData[key] = true;
+            else if (value === 'false') configData[key] = false;
+            else if (value && !isNaN(value) && key !== 'web_password') configData[key] = parseInt(value);
+            else configData[key] = value;
+        });
+        
+        try {
+            const response = await fetch('/api/config', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(configData)
+            });
+            
+            const result = await response.json();
+            
+            showMessage(result.message, result.success ? 'success' : 'error');
+        } catch (error) {
+            showMessage('保存失败: ' + error.message, 'error');
+        }
+    }
+    
+    async function restartService() {
+        if (!confirm('确定要重启服务吗？这将中断当前的下载任务。')) {
+            return;
+        }
+        
+        try {
+            const response = await fetch('/api/service/restart', {
+                method: 'POST'
+            });
+            
+            const result = await response.json();
+            showMessage(result.message, result.success ? 'success' : 'error');
+        } catch (error) {
+            showMessage('重启失败: ' + error.message, 'error');
+        }
+    }
+    
+    function showMessage(message, type) {
+        const resultDiv = document.getElementById('result-message');
+        resultDiv.textContent = message;
+        resultDiv.className = `alert alert-${type}`;
+        resultDiv.classList.remove('hidden');
+        
+        setTimeout(() => {
+            resultDiv.classList.add('hidden');
+        }, 5000);
+    }
+</script>
+{% endblock %}

@@ -12,12 +12,15 @@ import time
 from typing import List
 
 import httpx
+import uvicorn
 
 from config import Config, load_config, save_config
 from pikpak_client import PikPakClientWrapper
 from rss_parser import RSSParser, TorrentInfo
 from notifier import Notifier
 from utils import setup_logging, ensure_directory, async_retry
+from state_manager import StateManager
+from web_api import init_web, app
 
 logger = logging.getLogger(__name__)
 
@@ -28,13 +31,14 @@ CONFIG_FILE = os.path.join(SCRIPT_DIR, "config.json")
 class BangumiDownloader:
     """番剧下载器主类"""
 
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, state_manager: StateManager):
         self.config = config
         self.pikpak_client = PikPakClientWrapper(config)
         self.rss_parser = RSSParser(config)
         self.notifier = Notifier(config)
         self.http_client: httpx.AsyncClient = None
         self.torrent_list: List[TorrentInfo] = []
+        self.state_manager = state_manager
 
         # 监控和健康检查
         self.error_count: int = 0
@@ -114,6 +118,14 @@ class BangumiDownloader:
                 torrent_info.torrent_url, folder_id, torrent_info.bangumi_title
             )
 
+            episode_name = torrent_name.rsplit(".", 1)[0]
+            self.state_manager.add_update(
+                bangumi_title=torrent_info.bangumi_title,
+                episode=episode_name,
+                torrent_url=torrent_info.torrent_url,
+                status="success",
+            )
+
             await self.notifier.send_async(
                 "番剧更新", f"📺 {torrent_info.bangumi_title} 更新啦！快去看看吧！🎉"
             )
@@ -122,6 +134,15 @@ class BangumiDownloader:
 
         except Exception as e:
             logger.error(f"处理种子失败 {torrent_name}: {e}")
+
+            episode_name = torrent_name.rsplit(".", 1)[0]
+            self.state_manager.add_update(
+                bangumi_title=torrent_info.bangumi_title,
+                episode=episode_name,
+                torrent_url=torrent_info.torrent_url,
+                status="failed",
+            )
+
             return False
 
     async def run_once(self) -> None:
@@ -162,6 +183,9 @@ class BangumiDownloader:
 
         # 成功执行后重置错误计数
         self.error_count = 0
+
+        # 更新最后检查时间
+        self.state_manager.update_last_check()
 
     async def health_check(self) -> None:
         """健康检查
@@ -221,8 +245,45 @@ class BangumiDownloader:
         logger.info("资源清理完成")
 
 
-def main():
-    """主函数"""
+async def run_main_loop(downloader: BangumiDownloader):
+    """运行主下载循环"""
+    while True:
+        try:
+            await downloader.run_once()
+            await downloader.health_check()
+        except Exception as e:
+            downloader.error_count += 1
+            logger.error(
+                f"❌ 运行出错 ({downloader.error_count}次): {e}", exc_info=True
+            )
+            await downloader.check_error_alert()
+            await downloader.notifier.send_async(
+                "运行错误", f"❌ 运行出错 ({downloader.error_count}次): {e}"
+            )
+
+        await asyncio.sleep(downloader.config.rss_check_interval)
+
+
+async def run_web_server(
+    config: Config, downloader: BangumiDownloader, state_manager: StateManager
+):
+    """运行Web服务器"""
+    if not config.web_enabled:
+        return
+
+    init_web(config, downloader, state_manager)
+
+    config_uvicorn = uvicorn.Config(
+        app=app, host=config.web_host, port=config.web_port, log_level="warning"
+    )
+
+    server = uvicorn.Server(config_uvicorn)
+
+    await server.serve()
+
+
+async def async_main():
+    """异步主函数"""
     try:
         config = load_config(CONFIG_FILE)
     except Exception as e:
@@ -237,7 +298,8 @@ def main():
         json_format=config.log_json_format,
     )
 
-    downloader = BangumiDownloader(config)
+    state_manager = StateManager(os.path.join(SCRIPT_DIR, "state.json"))
+    downloader = BangumiDownloader(config, state_manager)
 
     def signal_handler(sig, frame):
         logger.info("收到退出信号，正在保存状态...")
@@ -248,12 +310,13 @@ def main():
     signal.signal(signal.SIGTERM, signal_handler)
 
     try:
-        asyncio.run(downloader.initialize())
+        await downloader.initialize()
     except Exception as e:
         logger.error(f"❌ 初始化失败: {e}")
         sys.exit(1)
 
     save_config(config, CONFIG_FILE)
+    state_manager.set_start_time(downloader.start_time)
 
     logger.info("=" * 60)
     logger.info("Bangumi-PikPak 启动成功")
@@ -263,25 +326,22 @@ def main():
     logger.info(f"代理: {'已启用' if config.enable_proxy else '未启用'}")
     logger.info(f"健康检查: {'已启用' if config.enable_health_check else '未启用'}")
     logger.info(f"错误告警: {'已启用' if config.enable_error_alert else '未启用'}")
+    logger.info(f"Web界面: {'已启用' if config.web_enabled else '未启用'}")
+    if config.web_enabled:
+        logger.info(f"Web访问地址: http://{config.web_host}:{config.web_port}")
     logger.info("=" * 60)
 
-    while True:
-        try:
-            asyncio.run(downloader.run_once())
-            asyncio.run(downloader.health_check())
-        except Exception as e:
-            downloader.error_count += 1
-            logger.error(
-                f"❌ 运行出错 ({downloader.error_count}次): {e}", exc_info=True
-            )
-            asyncio.run(downloader.check_error_alert())
-            asyncio.run(
-                downloader.notifier.send_async(
-                    "运行错误", f"❌ 运行出错 ({downloader.error_count}次): {e}"
-                )
-            )
+    if config.web_enabled:
+        await asyncio.gather(
+            run_main_loop(downloader), run_web_server(config, downloader, state_manager)
+        )
+    else:
+        await run_main_loop(downloader)
 
-        time.sleep(config.rss_check_interval)
+
+def main():
+    """主函数"""
+    asyncio.run(async_main())
 
 
 if __name__ == "__main__":

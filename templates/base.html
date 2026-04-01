@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Bangumi-PikPak{% endblock %}</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">
+            <a href="/dashboard">Bangumi-PikPak</a>
+        </div>
+        <div class="nav-links">
+            <a href="/dashboard">仪表盘</a>
+            <a href="/logs">日志</a>
+            <a href="/config">配置</a>
+            <a href="/logout">退出</a>
+        </div>
+    </nav>
+    
+    <main class="container">
+        {% block content %}{% endblock %}
+    </main>
+    
+    <footer class="footer">
+        <p>Bangumi-PikPak v1.0 | 自动追番下载工具</p>
+    </footer>
+    
+    <script src="/static/js/app.js"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

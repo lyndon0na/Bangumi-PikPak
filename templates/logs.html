@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+
+{% block title %}日志 - Bangumi-PikPak{% endblock %}
+
+{% block content %}
+<div class="logs-page">
+    <div class="logs-controls">
+        <div class="control-group">
+            <label for="log-lines">显示行数:</label>
+            <select id="log-lines">
+                <option value="100">100行</option>
+                <option value="200">200行</option>
+                <option value="500">500行</option>
+                <option value="1000">1000行</option>
+            </select>
+        </div>
+        
+        <div class="control-group">
+            <label for="log-level">日志级别:</label>
+            <select id="log-level">
+                <option value="">全部</option>
+                <option value="ERROR">ERROR</option>
+                <option value="WARNING">WARNING</option>
+                <option value="INFO">INFO</option>
+                <option value="DEBUG">DEBUG</option>
+            </select>
+        </div>
+        
+        <button class="btn btn-primary" onclick="loadLogs()">刷新日志</button>
+        <button class="btn btn-secondary" onclick="toggleAutoRefresh()">
+            <span id="auto-refresh-text">开启自动刷新</span>
+        </button>
+    </div>
+    
+    <div class="logs-container">
+        <div class="log-content" id="log-content">
+            <pre>加载中...</pre>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let autoRefresh = false;
+    let refreshInterval = null;
+    
+    async function loadLogs() {
+        const lines = document.getElementById('log-lines').value;
+        const level = document.getElementById('log-level').value;
+        
+        try {
+            const response = await fetch(`/api/logs?lines=${lines}&level=${level}`);
+            const data = await response.json();
+            
+            const logContent = document.getElementById('log-content');
+            
+            if (data.logs && data.logs.length > 0) {
+                const formattedLogs = data.logs.map(log => {
+                    let className = 'log-line';
+                    if (log.includes('ERROR')) className += ' log-error';
+                    else if (log.includes('WARNING')) className += ' log-warning';
+                    else if (log.includes('INFO')) className += ' log-info';
+                    else if (log.includes('DEBUG')) className += ' log-debug';
+                    
+                    return `<div class="${className}">${escapeHtml(log)}</div>`;
+                }).join('');
+                
+                logContent.innerHTML = formattedLogs;
+            } else {
+                logContent.innerHTML = '<pre>暂无日志</pre>';
+            }
+        } catch (error) {
+            console.error('加载日志失败:', error);
+            document.getElementById('log-content').innerHTML = '<pre>加载失败</pre>';
+        }
+    }
+    
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+    
+    function toggleAutoRefresh() {
+        autoRefresh = !autoRefresh;
+        const text = document.getElementById('auto-refresh-text');
+        
+        if (autoRefresh) {
+            text.textContent = '停止自动刷新';
+            refreshInterval = setInterval(loadLogs, 5000);
+        } else {
+            text.textContent = '开启自动刷新';
+            if (refreshInterval) {
+                clearInterval(refreshInterval);
+                refreshInterval = null;
+            }
+        }
+    }
+    
+    // 初始加载
+    loadLogs();
+</script>
+{% endblock %}

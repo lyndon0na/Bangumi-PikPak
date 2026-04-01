@@ -54,7 +54,7 @@ echo -e "${YELLOW}创建服务文件: ${SERVICE_FILE}${NC}"
 cat > "${SERVICE_FILE}" <<EOF
 [Unit]
 Description=Bangumi-PikPak Auto Downloader Service
-Documentation=https://github.com/YinBuLiao/Bangumi-PikPak
+Documentation=https://github.com/lyndon0na/Bangumi-PikPak
 After=network.target network-online.target
 Wants=network-online.target
 

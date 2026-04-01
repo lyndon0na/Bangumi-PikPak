@@ -27,5 +27,11 @@
     "health_check_interval": 3600,
     
     "enable_error_alert": false,
-    "error_alert_threshold": 3
+    "error_alert_threshold": 3,
+    
+    "web_enabled": true,
+    "web_host": "0.0.0.0",
+    "web_port": 8080,
+    "web_password": "your_secure_password_here",
+    "web_secret_key": ""
 }

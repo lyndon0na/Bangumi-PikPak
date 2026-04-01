@@ -110,7 +110,7 @@ Closes #123
 
 如果您在贡献过程中遇到任何问题，请：
 
-1. 查看 [Issues](https://github.com/YinBuLiao/Bangumi-PikPak/issues)
+1. 查看 [Issues](https://github.com/lyndon0na/Bangumi-PikPak/issues)
 2. 创建新的 Issue 描述您的问题
 
 ## 行为准则
